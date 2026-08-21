@@ -112,7 +112,7 @@ async function checkHealth() {
 }
 
 // ---------------------------------------------------------------------
-// ارسال سوال و دریافت پاسخ RAG
+// ارسال سوال و دریافت پاسخ RAG به‌صورت استریمینگ
 // ---------------------------------------------------------------------
 async function handleSubmit(e) {
   e.preventDefault();
@@ -144,10 +144,52 @@ async function handleSubmit(e) {
       throw new Error(errBody.detail || `خطای سرور (${res.status})`);
     }
 
-    const data = await res.json();
     loadingEl.remove();
-    appendMessage("assistant", data.answer, data.sources);
-    conversationHistory.push({ role: "assistant", content: data.answer });
+    const assistantMsg = createAssistantMessagePlaceholder();
+    let fullAnswer = "";
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop(); // نگه‌داشتن آخرین خط در صورت کامل‌نشدن
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        try {
+          const parsed = JSON.parse(line);
+
+          if (parsed.type === "status") {
+            // نمایش گام جاری به کاربر
+            assistantMsg.statusEl.textContent = parsed.data;
+            assistantMsg.statusEl.style.display = "block";
+          } else if (parsed.type === "sources") {
+            // رندر کردن بلاک منابع در پایین حباب پاسخ
+            renderSourcesBlock(assistantMsg.row, parsed.data);
+          } else if (parsed.type === "text") {
+            // مخفی کردن وضعیت زنده موقع شروع استریم متن
+            assistantMsg.statusEl.style.display = "none";
+
+            fullAnswer += parsed.data;
+            // تبدیل عبارات [منبع X] به لینک‌های قابل کلیک
+            assistantMsg.bubble.innerHTML = formatCitations(fullAnswer);
+            chatScroll.scrollTop = chatScroll.scrollHeight;
+          }
+        } catch (e) {
+          console.error("Error parsing NDJSON frame:", e, line);
+        }
+      }
+    }
+
+    // ذخیره پاسخ کامل در تاریخچه گفتگو
+    conversationHistory.push({ role: "assistant", content: fullAnswer });
     kbDot.className = "kb-dot online";
     kbStatusText.textContent = "متصل به سرور";
   } catch (err) {
@@ -177,6 +219,100 @@ function appendLoadingMessage() {
   return row;
 }
 
+// ساخت المان پیام دستیار شامل بخش وضعیت زنده
+function createAssistantMessagePlaceholder() {
+  const row = document.createElement("div");
+  row.className = "msg-row assistant";
+
+  const label = document.createElement("div");
+  label.className = "assistant-label";
+  label.textContent = "دستیار دانشگاه";
+  row.appendChild(label);
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "status-badge";
+  statusEl.style.cssText =
+    "font-size: 0.8rem; color: #888; margin-bottom: 6px; font-style: italic;";
+  row.appendChild(statusEl);
+
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble";
+  row.appendChild(bubble);
+
+  chatScroll.appendChild(row);
+  chatScroll.scrollTop = chatScroll.scrollHeight;
+
+  return { row, bubble, statusEl };
+}
+
+// تبدیل ارجاعات [منبع ۱] به لینک‌های کلیک‌پذیر
+function formatCitations(text) {
+  const escaped = escapeHtml(text);
+  // جایگزینی عبارت [منبع X] یا [منبع x] با دکمه لینک
+  return escaped.replace(/\[منبع\s*([۰-۹0-9]+)\]/g, (match, p1) => {
+    return `<a href="javascript:void(0)" class="inline-citation" onclick="highlightSource('${p1}')">${match}</a>`;
+  });
+}
+
+// اکشن کلیک روی ارجاع درون‌متنی
+window.highlightSource = function (sourceNum) {
+  const normalizedNum = toPersianDigits(sourceNum);
+  const chips = document.querySelectorAll(".source-chip");
+
+  chips.forEach((chip) => {
+    if (chip.textContent.includes(`منبع ${normalizedNum}`)) {
+      const detail = chip.nextElementSibling;
+      if (detail && !detail.classList.contains("open")) {
+        detail.classList.add("open");
+        chip.classList.add("active");
+      }
+      chip.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
+};
+
+function renderSourcesBlock(rowEl, sources) {
+  if (!sources || !sources.length) return;
+
+  const sourcesBlock = document.createElement("div");
+  sourcesBlock.className = "sources-block";
+
+  sources.forEach((src, idx) => {
+    const sourceWrapper = document.createElement("div");
+    sourceWrapper.className = "source-item-wrapper";
+
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "source-chip";
+    chip.textContent = `منبع ${toPersianDigits(idx + 1)} · ${src.document_name}`;
+
+    const detail = document.createElement("div");
+    detail.className = "source-detail";
+
+    const scorePercentage = (src.score * 100).toFixed(0);
+    detail.innerHTML = `
+      <div class="src-meta">
+        <strong>سند:</strong> ${escapeHtml(src.document_name)} | 
+        <strong>بخش:</strong> ${toPersianDigits(src.chunk_index + 1)} | 
+        <strong>ارتباط:</strong> ${toPersianDigits(scorePercentage)}٪
+      </div>
+      <div class="src-content">${escapeHtml(src.content)}</div>
+    `;
+
+    chip.addEventListener("click", () => {
+      detail.classList.toggle("open");
+      chip.classList.toggle("active");
+    });
+
+    sourceWrapper.appendChild(chip);
+    sourceWrapper.appendChild(detail);
+    sourcesBlock.appendChild(sourceWrapper);
+  });
+
+  rowEl.appendChild(sourcesBlock);
+  chatScroll.scrollTop = chatScroll.scrollHeight;
+}
+
 function appendMessage(role, text, sources) {
   const row = document.createElement("div");
   row.className = `msg-row ${role}`;
@@ -190,32 +326,11 @@ function appendMessage(role, text, sources) {
 
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
-  bubble.textContent = text;
+  bubble.innerHTML = role === "assistant" ? formatCitations(text) : escapeHtml(text);
   row.appendChild(bubble);
 
   if (sources && sources.length) {
-    const sourcesBlock = document.createElement("div");
-    sourcesBlock.className = "sources-block";
-
-    sources.forEach((src, idx) => {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "source-chip";
-      chip.textContent = `منبع ${toPersianDigits(idx + 1)} · ${src.document_name}`;
-
-      const detail = document.createElement("div");
-      detail.className = "source-detail";
-      detail.innerHTML = `<span class="src-meta">${src.document_name} — بخش ${toPersianDigits(
-        src.chunk_index + 1
-      )} — امتیاز شباهت ${toPersianDigits(src.score)}</span>${escapeHtml(src.content)}`;
-
-      chip.addEventListener("click", () => detail.classList.toggle("open"));
-
-      sourcesBlock.appendChild(chip);
-      row.appendChild(detail);
-    });
-
-    row.appendChild(sourcesBlock);
+    renderSourcesBlock(row, sources);
   }
 
   chatScroll.appendChild(row);
@@ -229,6 +344,7 @@ function escapeHtml(str) {
 }
 
 function toPersianDigits(input) {
+  if (input === undefined || input === null) return "";
   const map = { 0: "۰", 1: "۱", 2: "۲", 3: "۳", 4: "۴", 5: "۵", 6: "۶", 7: "۷", 8: "۸", 9: "۹" };
   return String(input).replace(/[0-9]/g, (d) => map[d]);
 }
@@ -279,13 +395,18 @@ function renderDocList(documents) {
 
 async function deleteDocument(name) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/documents/${encodeURIComponent(name)}`, {
-      method: "DELETE",
-    });
+    const res = await fetch(
+      `${API_BASE_URL}/api/documents/${encodeURIComponent(name)}`,
+      {
+        method: "DELETE",
+      }
+    );
     if (!res.ok) throw new Error();
     refreshDocuments();
   } catch (err) {
-    uploadStatus.innerHTML = `<span class="status-err">حذف سند «${escapeHtml(name)}» ناموفق بود.</span>`;
+    uploadStatus.innerHTML = `<span class="status-err">حذف سند «${escapeHtml(
+      name
+    )}» ناموفق بود.</span>`;
   }
 }
 
@@ -295,7 +416,9 @@ async function handleUpload(fileList) {
   const formData = new FormData();
   Array.from(fileList).forEach((file) => formData.append("files", file));
 
-  uploadStatus.innerHTML = `در حال پردازش ${toPersianDigits(fileList.length)} فایل…`;
+  uploadStatus.innerHTML = `در حال پردازش ${toPersianDigits(
+    fileList.length
+  )} فایل…`;
 
   try {
     const res = await fetch(`${API_BASE_URL}/api/documents/upload`, {
@@ -309,10 +432,14 @@ async function handleUpload(fileList) {
     }
 
     const data = await res.json();
-    uploadStatus.innerHTML = `<span class="status-ok">${escapeHtml(data.message)}</span>`;
+    uploadStatus.innerHTML = `<span class="status-ok">${escapeHtml(
+      data.message
+    )}</span>`;
     refreshDocuments();
   } catch (err) {
-    uploadStatus.innerHTML = `<span class="status-err">خطا در بارگذاری: ${escapeHtml(err.message)}</span>`;
+    uploadStatus.innerHTML = `<span class="status-err">خطا در بارگذاری: ${escapeHtml(
+      err.message
+    )}</span>`;
   } finally {
     fileInput.value = "";
   }

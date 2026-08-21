@@ -473,3 +473,96 @@ body {
 /* scrollbars */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; }
+
+/* RAG Source Citation Cards & Expandable Accordion Styles */
+.sources-block {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.source-item-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.source-chip {
+  background-color: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  color: #334155;
+  cursor: pointer;
+  text-align: right;
+  transition: all 0.2s ease;
+}
+
+.source-chip:hover, .source-chip.active {
+  background-color: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+.source-detail {
+  display: none;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.source-detail.open {
+  display: block;
+}
+
+.src-meta {
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #1e293b;
+}
+
+.src-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Interactive Inline Citations */
+.inline-citation {
+  color: #2563eb;
+  background-color: rgba(37, 99, 235, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 0.88em;
+  text-decoration: none;
+  margin: 0 2px;
+  display: inline-block;
+  transition: all 0.2s ease-in-out;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  cursor: pointer;
+}
+
+.inline-citation:hover {
+  background-color: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+}
+
+.inline-citation:active {
+  transform: translateY(0);
+}
+.src-content {
+  direction: rtl;
+  text-align: right;
+  unicode-bidi: isolate;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

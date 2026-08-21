@@ -10,7 +10,8 @@ The implementation is selected through the LLM_PROVIDER setting in .env.
 
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from typing import List, Dict
+from typing import List, Dict, Generator
+import time
 
 from openai import OpenAI
 
@@ -29,6 +30,11 @@ class BaseLLMClient(ABC):
         """Generate a response from the provided chat messages."""
         raise NotImplementedError
 
+    @abstractmethod
+    def generate_stream(self, messages: List[Dict[str, str]]) -> Generator[str, None, None]:
+        """Generate a response stream chunk-by-chunk."""
+        raise NotImplementedError
+
 
 class MockLLMClient(BaseLLMClient):
     """
@@ -39,8 +45,6 @@ class MockLLMClient(BaseLLMClient):
     """
 
     def generate(self, messages: List[Dict[str, str]]) -> str:
-
-        # Find the latest user message
         user_message = next(
             (
                 m["content"]
@@ -50,7 +54,6 @@ class MockLLMClient(BaseLLMClient):
             ""
         )
 
-        # Return a mock response instead of calling a real LLM
         return (
             "[Test response - real LLM is not connected]\n"
             "This is a mock response used to verify that the RAG pipeline "
@@ -59,6 +62,13 @@ class MockLLMClient(BaseLLMClient):
             "LLM_API_KEY in the .env file.\n\n"
             f"Received question: {user_message}"
         )
+
+    def generate_stream(self, messages: List[Dict[str, str]]) -> Generator[str, None, None]:
+        """Simulate streaming response word by word for mock testing."""
+        full_text = self.generate(messages)
+        for word in full_text.split(" "):
+            yield word + " "
+            time.sleep(0.03)
 
 
 class OpenAICompatibleClient(BaseLLMClient):
@@ -71,7 +81,6 @@ class OpenAICompatibleClient(BaseLLMClient):
         temperature: float,
         max_tokens: int
     ):
-        # Create an OpenAI-compatible API client
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url
@@ -82,28 +91,39 @@ class OpenAICompatibleClient(BaseLLMClient):
         self.max_tokens = max_tokens
 
     def generate(self, messages: List[Dict[str, str]]) -> str:
-
-        # Send the messages to the configured LLM
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
-
-        # Return the generated text
         return response.choices[0].message.content
+
+    def generate_stream(self, messages: List[Dict[str, str]]) -> Generator[str, None, None]:
+        """Stream chunks directly from OpenAI API."""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=True 
+            )
+
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            logger.error(f"Error in OpenAI LLM streaming: {e}")
+            raise e
 
 
 @lru_cache
 def get_llm_client() -> BaseLLMClient:
-    # Load application settings
     settings = get_settings()
 
-    # Use the real LLM client if configured
     if settings.LLM_PROVIDER == "openai_compatible":
-
-        # Warn if the API key is missing
         if not settings.LLM_API_KEY:
             logger.warning(
                 "LLM_API_KEY is empty; requests are likely to fail."
@@ -117,7 +137,6 @@ def get_llm_client() -> BaseLLMClient:
             max_tokens=settings.LLM_MAX_TOKENS,
         )
 
-    # Otherwise, use the mock client for testing
     logger.info(
         "Using MockLLMClient (test mode without a real LLM)."
     )
