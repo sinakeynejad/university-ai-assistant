@@ -43,44 +43,45 @@ async def upload_documents(
     for file in files:
 
         # Get the file extension
-        suffix = Path(file.filename).suffix.lower()
+        if file.filename :
+            suffix = Path(file.filename).suffix.lower()
+            
+            # Check if the file format is supported
+            if suffix not in ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"File format {file.filename} is not supported. "
+                        f"Allowed formats: {sorted(ALLOWED_EXTENSIONS)}"
+                    )
+                )
 
-        # Check if the file format is supported
-        if suffix not in ALLOWED_EXTENSIONS:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"File format {file.filename} is not supported. "
-                    f"Allowed formats: {sorted(ALLOWED_EXTENSIONS)}"
+            # Save the uploaded file
+            destination = upload_dir / file.filename
+            content = await file.read()
+            destination.write_bytes(content)
+
+            try:
+                # Extract text and add document chunks to vector database
+                raw_text = extract_text(destination)
+                chunks_count = ingest_document(file.filename, raw_text)
+
+            except Exception as exc:
+                # Log unexpected processing errors
+                logger.exception(f"Error processing file: {file.filename}")
+
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error processing file {file.filename}: {exc}"
+                ) from exc
+
+            # Add document information to the response
+            results.append(
+                DocumentInfo(
+                    document_name=file.filename,
+                    chunks_count=chunks_count
                 )
             )
-
-        # Save the uploaded file
-        destination = upload_dir / file.filename
-        content = await file.read()
-        destination.write_bytes(content)
-
-        try:
-            # Extract text and add document chunks to vector database
-            raw_text = extract_text(destination)
-            chunks_count = ingest_document(file.filename, raw_text)
-
-        except Exception as exc:
-            # Log unexpected processing errors
-            logger.exception(f"Error processing file: {file.filename}")
-
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing file {file.filename}: {exc}"
-            ) from exc
-
-        # Add document information to the response
-        results.append(
-            DocumentInfo(
-                document_name=file.filename,
-                chunks_count=chunks_count
-            )
-        )
 
     return UploadResponse(
         message=f"{len(results)} files added to vector database",

@@ -10,12 +10,16 @@ The implementation is selected through the LLM_PROVIDER setting in .env.
 
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from typing import List, Dict
 
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
-from app.config import get_settings
-from app.utils.logger import get_logger
+try:
+    from app.config import get_settings
+    from app.utils.logger import get_logger
+except ModuleNotFoundError:  # pragma: no cover - supports repo-root execution
+    from backend.app.config import get_settings
+    from backend.app.utils.logger import get_logger
 
 
 # Initialize application logger
@@ -25,7 +29,7 @@ logger = get_logger(__name__)
 class BaseLLMClient(ABC):
 
     @abstractmethod
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(self, messages: list[ChatCompletionMessageParam]) -> str:
         """Generate a response from the provided chat messages."""
         raise NotImplementedError
 
@@ -38,17 +42,32 @@ class MockLLMClient(BaseLLMClient):
     can be tested from frontend to backend and retrieval.
     """
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(self, messages: list[ChatCompletionMessageParam]) -> str:
 
-        # Find the latest user message
-        user_message = next(
-            (
-                m["content"]
-                for m in reversed(messages)
-                if m["role"] == "user"
-            ),
-            ""
-        )
+        # Find the latest user message in a way that is compatible with OpenAI's
+        # typed message structure and may contain list-based content payloads.
+        user_message = ""
+        for message in reversed(messages):
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") != "user":
+                continue
+
+            content = message.get("content")
+            if isinstance(content, str):
+                user_message = content
+                break
+            if isinstance(content, list):
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        text = item.get("text")
+                        if isinstance(text, str):
+                            text_parts.append(text)
+                if text_parts:
+                    user_message = " ".join(text_parts)
+                    break
+            break
 
         # Return a mock response instead of calling a real LLM
         return (
@@ -81,7 +100,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         self.temperature = temperature
         self.max_tokens = max_tokens
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(self, messages: list[ChatCompletionMessageParam]) -> str:
 
         # Send the messages to the configured LLM
         response = self.client.chat.completions.create(
@@ -92,7 +111,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         )
 
         # Return the generated text
-        return response.choices[0].message.content
+        return response.choices[0].message.content or ""
 
 
 @lru_cache

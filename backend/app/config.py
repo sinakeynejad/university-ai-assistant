@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     CHROMA_COLLECTION: str = "kntu_documents"
 
     # Embedding model configuration
-    EMBEDDING_MODEL_NAME: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    EMBEDDING_MODEL_NAME: str = "nomic-embed-text"
     EMBEDDING_DEVICE: str = "cpu"
 
     # LLM provider configuration

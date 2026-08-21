@@ -9,14 +9,18 @@ Responsibilities:
 """
 
 from functools import lru_cache
-from typing import List, Dict, Any
+from typing import Any, cast
 import uuid
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
-from app.config import get_settings
-from app.utils.logger import get_logger
+try:
+    from app.config import get_settings
+    from app.utils.logger import get_logger
+except ModuleNotFoundError:  # pragma: no cover - supports repo-root execution
+    from backend.app.config import get_settings
+    from backend.app.utils.logger import get_logger
 
 
 # Initialize application logger
@@ -44,8 +48,8 @@ class VectorStore:
     def add_chunks(
         self,
         document_name: str,
-        chunks: List[str],
-        embeddings: List[List[float]],
+        chunks: list[str],
+        embeddings: list[list[float]],
     ) -> int:
 
         # Generate a unique ID for each chunk
@@ -66,9 +70,9 @@ class VectorStore:
         # Add chunks, embeddings, IDs, and metadata to ChromaDB
         self.collection.add(
             ids=ids,
-            embeddings=embeddings,
+            embeddings=cast(Any, embeddings),
             documents=chunks,
-            metadatas=metadatas
+            metadatas=cast(Any, metadatas),
         )
 
         logger.info(
@@ -79,9 +83,9 @@ class VectorStore:
 
     def similarity_search(
         self,
-        query_embedding: List[float],
-        top_k: int
-    ) -> List[Dict[str, Any]]:
+        query_embedding: list[float],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
 
         # Search for the most similar chunks
         results = self.collection.query(
@@ -89,38 +93,57 @@ class VectorStore:
             n_results=top_k,
         )
 
-        output = []
+        output: list[dict[str, Any]] = []
 
-        # Return an empty list if no results were found
-        if not results["ids"] or not results["ids"][0]:
+        ids = results.get("ids") or []
+        documents = results.get("documents") or []
+        metadatas = results.get("metadatas") or []
+        distances = results.get("distances") or []
+
+        if not ids or not ids[0]:
             return output
 
-        # Process each retrieved result
-        for i in range(len(results["ids"][0])):
-            distance = results["distances"][0][i]
+        first_ids = ids[0]
+        first_documents = documents[0] if documents and documents[0] else []
+        first_metadatas = metadatas[0] if metadatas and metadatas[0] else []
+        first_distances = distances[0] if distances and distances[0] else []
 
-            # Convert cosine distance into a similarity score
+        # Process each retrieved result
+        for i in range(len(first_ids)):
+            if i >= len(first_distances):
+                break
+
+            distance = first_distances[i]
             score = 1 - distance
+
+            if i >= len(first_documents):
+                content = ""
+            else:
+                content = first_documents[i]
+
+            metadata = first_metadatas[i] if i < len(first_metadatas) else {}
 
             output.append(
                 {
-                    "content": results["documents"][0][i],
-                    "document_name": results["metadatas"][0][i]["document_name"],
-                    "chunk_index": results["metadatas"][0][i]["chunk_index"],
+                    "content": content,
+                    "document_name": metadata.get("document_name", ""),
+                    "chunk_index": metadata.get("chunk_index", 0),
                     "score": round(float(score), 4),
                 }
             )
 
         return output
 
-    def list_documents(self) -> List[str]:
+    def list_documents(self) -> list[str]:
         # Retrieve metadata for all stored chunks
         all_items = self.collection.get(include=["metadatas"])
+        stored_metadatas = all_items.get("metadatas") or []
 
         # Extract unique document names
         names = {
-            m["document_name"]
-            for m in all_items["metadatas"]
+            str(m.get("document_name"))
+            for m in stored_metadatas
+            if isinstance(m, dict) and m.get("document_name") is not None
         }
 
         return sorted(names)
