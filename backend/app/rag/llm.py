@@ -10,7 +10,7 @@ The implementation is selected through the LLM_PROVIDER setting in .env.
 
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from typing import List, Dict, Generator
+from typing import List, Dict, Generator, Optional
 import time
 
 from openai import OpenAI
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 class BaseLLMClient(ABC):
 
     @abstractmethod
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(self, messages: List[Dict[str, str]], max_tokens: Optional[int] = None, timeout: Optional[float] = None) -> str:
         """Generate a response from the provided chat messages."""
         raise NotImplementedError
 
@@ -44,7 +44,7 @@ class MockLLMClient(BaseLLMClient):
     can be tested from frontend to backend and retrieval.
     """
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(self, messages: List[Dict[str, str]], max_tokens: Optional[int] = None, timeout: Optional[float] = None) -> str:
         user_message = next(
             (
                 m["content"]
@@ -90,14 +90,25 @@ class OpenAICompatibleClient(BaseLLMClient):
         self.temperature = temperature
         self.max_tokens = max_tokens
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
-        return response.choices[0].message.content
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> str:
+        effective_max_tokens = max_tokens or self.max_tokens
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=effective_max_tokens,
+                timeout=timeout,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.warning(f"LLM call failed or timed out: {e}")
+            return ""
 
     def generate_stream(self, messages: List[Dict[str, str]]) -> Generator[str, None, None]:
         """Stream chunks directly from OpenAI API."""
@@ -107,7 +118,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                stream=True 
+                stream=True
             )
 
             for chunk in response:

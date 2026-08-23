@@ -104,6 +104,7 @@ class VectorStore:
 
             output.append(
                 {
+                    "id": results["ids"][0][i],
                     "content": results["documents"][0][i],
                     "document_name": results["metadatas"][0][i]["document_name"],
                     "chunk_index": results["metadatas"][0][i]["chunk_index"],

@@ -14,6 +14,7 @@ from app.schemas import (
 from app.rag.loaders import extract_text
 from app.rag.pipeline import ingest_document
 from app.rag.vector_store import get_vector_store
+from app.rag.hybrid_search import get_hybrid_search
 
 
 # Create router for document-related endpoints
@@ -109,6 +110,7 @@ def delete_document(document_name: str) -> DeleteResponse:
 
     # Delete the document and its chunks
     vector_store.delete_document(document_name)
+    get_hybrid_search().refresh()
 
     return DeleteResponse(
         message=f"{document_name} deleted successfully"

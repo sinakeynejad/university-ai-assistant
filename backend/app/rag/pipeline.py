@@ -7,6 +7,7 @@ from app.rag.vector_store import get_vector_store
 from app.rag.llm import get_llm_client
 from app.schemas import ChatMessage, SourceChunk
 from app.utils.logger import get_logger
+from app.rag.hybrid_search import get_hybrid_search, HybridSearch
 
 
 # Initialize application logger
@@ -75,6 +76,7 @@ def _build_messages(
 
     return messages
 
+
 QUERY_REWRITE_PROMPT = """تو یک دستیار بازنویسی سوال برای سیستم‌های جستجوی دانشگاهی هستی.
 وظیفه تو این است که سوال محاوره‌ای، مبهم یا کوتاه کاربر را به یک پرسش دقیق، رسمی و حاوی کلیدواژه‌های اصلی آیین‌نامه‌ها و قوانین دانشگاهی تبدیل کنی تا جستجو در پایگاه داده متنی بهتر انجام شود.
 
@@ -90,21 +92,41 @@ QUERY_REWRITE_PROMPT = """تو یک دستیار بازنویسی سوال بر�
 def rewrite_query(question: str) -> str:
     """Rewrite a user query into a formal, keyword-rich search query."""
     llm_client = get_llm_client()
-    
+
     messages = [
         {
             "role": "user",
             "content": QUERY_REWRITE_PROMPT.format(question=question)
         }
     ]
-    
+
     try:
-        rewritten = llm_client.generate(messages).strip()
-        logger.info(f"Original Query: '{question}' -> Rewritten Query: '{rewritten}'")
-        return rewritten if rewritten else question
+        # این مرحله فقط باید یک جمله‌ی کوتاه برگرداند، پس max_tokens کوچک
+        # و یک سقف زمانی سخت‌گیرانه (۱۵ ثانیه) دارد تا در صورت کند بودن
+        # مدل (مثلا روی CPU-only)، به‌جای معطل ماندن طولانی، سریع به سوال
+        # اصلی کاربر برگردیم.
+        rewritten = llm_client.generate(
+            messages, max_tokens=150, timeout=15).strip()
+
+        looks_invalid = (
+            not rewritten
+            or len(rewritten) > len(question) * 5 + 100
+            or "متاسفانه مدل نتوانست" in rewritten
+        )
+        if looks_invalid:
+            logger.warning(
+                "Query rewriting produced an invalid/empty result; falling back to original question."
+            )
+            return question
+
+        logger.info(
+            f"Original Query: '{question}' -> Rewritten Query: '{rewritten}'")
+        return rewritten
     except Exception as e:
-        logger.warning(f"Query rewriting failed: {e}. Falling back to original question.")
+        logger.warning(
+            f"Query rewriting failed: {e}. Falling back to original question.")
         return question
+
 
 # Answer a user question using the RAG pipeline (Non-streaming)
 def answer_question(
@@ -118,14 +140,16 @@ def answer_question(
 
     embedding_model = get_embedding_model()
     vector_store = get_vector_store()
+    hybrid_search = get_hybrid_search()
     llm_client = get_llm_client()
 
     search_query = rewrite_query(question)
     query_embedding = embedding_model.embed_query(search_query)
 
-    retrieved_chunks = vector_store.similarity_search(
-        query_embedding,
-        top_k=k
+    retrieved_chunks = hybrid_search.search(
+        query_text=search_query,
+        query_embedding=query_embedding,
+        top_k=k,
     )
 
     logger.info(
@@ -145,7 +169,7 @@ def answer_question(
             document_name=c["document_name"],
             chunk_index=c["chunk_index"],
             content=c["content"],
-            score=c["score"],
+            score=c["hybrid_score"],
         )
         for c in retrieved_chunks
     ]
@@ -163,12 +187,13 @@ def answer_question_stream(
     top_k: Optional[int] = None
 ) -> Generator[str, None, None]:
     """Stream answer chunks along with initial metadata (sources) using NDJSON protocol."""
-    
+
     settings = get_settings()
     k = top_k or settings.TOP_K
 
     embedding_model = get_embedding_model()
     vector_store = get_vector_store()
+    hybrid_search = get_hybrid_search()
     llm_client = get_llm_client()
 
     # STEP 1: Status - Query Rewriting
@@ -180,9 +205,10 @@ def answer_question_stream(
     query_embedding = embedding_model.embed_query(search_query)
 
     # Retrieve chunks from vector store
-    retrieved_chunks = vector_store.similarity_search(
-        query_embedding,
-        top_k=k
+    retrieved_chunks = hybrid_search.search(
+        query_text=search_query,
+        query_embedding=query_embedding,
+        top_k=k,
     )
 
     logger.info(
@@ -202,7 +228,7 @@ def answer_question_stream(
             "document_name": c["document_name"],
             "chunk_index": c["chunk_index"],
             "content": c["content"],
-            "score": c["score"],
+            "score": c["hybrid_score"],
         }
         for c in retrieved_chunks
     ]
@@ -241,8 +267,12 @@ def ingest_document(document_name: str, raw_text: str) -> int:
 
     embeddings = embedding_model.embed_documents(chunks)
 
-    return vector_store.add_chunks(
+    result = vector_store.add_chunks(
         document_name,
         chunks,
         embeddings
     )
+
+    get_hybrid_search().refresh()
+
+    return result
