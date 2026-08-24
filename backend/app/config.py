@@ -22,10 +22,7 @@ class Settings(BaseSettings):
     EMBEDDING_DEVICE: str = "cpu"
 
     # LLM provider configuration
-    # Supported providers: "openai_compatible" or "mock"
     LLM_PROVIDER: str = "openai_compatible"
-
-    # LLM API settings
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_MODEL_NAME: str = "aya-expanse:8b-q4_K_S"
@@ -41,12 +38,14 @@ class Settings(BaseSettings):
     # Number of documents retrieved from vector database
     TOP_K: int = 4
 
+    # ---------- ADD THIS LINE ----------
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8")
+        env_file=".env", 
+        env_file_encoding="utf-8",
+        extra="ignore"   # <-- allows extra env vars like SECRET_KEY
+    )
 
 
 @lru_cache
 def get_settings() -> Settings:
-    # Create and return application settings.
-    # lru_cache ensures that settings are loaded only once.
     return Settings()

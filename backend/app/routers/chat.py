@@ -1,23 +1,28 @@
-from fastapi import APIRouter, HTTPException
-
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from app.rag.pipeline import answer_question_stream
-
 from app.schemas import ChatRequest
-
 from app.utils.logger import get_logger
-from auth.database import Conversation, User
-from sqlalchemy.orm import Session
-from auth.deps import get_current_user, get_db
+
+# Auth dependencies
+from ..auth.deps import get_current_user, get_db
+from ..auth.database import User
+
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = get_logger(__name__)
 
+
 @router.post("")
-def chat(request: ChatRequest):
+def chat(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),   # <-- requires login
+    db: Session = Depends(get_db)                     # optional, for saving history
+):
     try:
-        logger.info(f"Incoming query: {request.question}")
-        
+        logger.info(f"User {current_user.id} asked: {request.question}")
+
         return StreamingResponse(
             answer_question_stream(
                 question=request.question,

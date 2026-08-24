@@ -2,20 +2,27 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import os
-
+from dotenv import load_dotenv
+load_dotenv()
+print("SECRET_KEY loaded:", os.getenv("SECRET_KEY"))   # debugging
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["sha256_crypt"], deprecated="auto")
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-def get_password_hash(password):
+def get_password_hash(password: str) -> str:
+    
+    if isinstance(password, str):
+        
+        password_bytes = password.encode('utf-8')[:72]
+        
+        password = password_bytes.decode('utf-8', errors='ignore')
     return pwd_context.hash(password)
-
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)

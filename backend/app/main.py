@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routers import chat, documents
-from auth.database import Base, engine
-from auth.router import router as auth_router
+from .auth.database import Base, engine
+from .auth.router import router as auth_router
 
 # Load application settings
 settings = get_settings()
