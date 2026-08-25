@@ -92,7 +92,7 @@ function loadConversations() {
     if (data) {
         conversations = data.conversations || [];
         currentConvId = data.currentId || null;
-        // Ensure currentConvId is valid, otherwise set to first or create new
+        // Ensure currentConvId is valid, otherwise fall back to the first conversation
         if (
             currentConvId &&
             !conversations.find((c) => c.id === currentConvId)
@@ -102,16 +102,11 @@ function loadConversations() {
         if (!currentConvId && conversations.length > 0) {
             currentConvId = conversations[0].id;
         }
-        if (!currentConvId) {
-            // No conversations – create default
-            createNewConversation(false); // don't save immediately, we'll save after
-            saveUserData();
-        }
+        // If there are no conversations at all, that's fine – the start
+        // screen (empty state) will be shown instead of forcing a new one.
     } else {
-        // No data – create default
         conversations = [];
         currentConvId = null;
-        createNewConversation(false);
         saveUserData();
     }
     // Set currentMessages to the messages of the active conversation
@@ -139,23 +134,28 @@ function createNewConversation(save = true) {
 }
 
 function deleteConversation(id) {
-    if (conversations.length <= 1) {
-        alert("حداقل یک گفتگو باید وجود داشته باشد.");
-        return;
-    }
-    if (!confirm("آیا این گفتگو حذف شود؟")) return;
-    const idx = conversations.findIndex((c) => c.id === id);
-    if (idx === -1) return;
-    conversations.splice(idx, 1);
-    if (currentConvId === id) {
-        // switch to another
-        currentConvId = conversations[0].id;
-        const conv = conversations.find((c) => c.id === currentConvId);
-        currentMessages = conv ? conv.messages : [];
-    }
-    saveUserData();
-    renderConversationList();
-    renderChatMessages();
+    const target = conversations.find((c) => c.id === id);
+    const title = target ? target.title : "این گفتگو";
+
+    openConfirmModal(`آیا از حذف «${title}» مطمئن هستید؟ این عملیات قابل بازگشت نیست.`, () => {
+        const idx = conversations.findIndex((c) => c.id === id);
+        if (idx === -1) return;
+        conversations.splice(idx, 1);
+        if (currentConvId === id) {
+            if (conversations.length > 0) {
+                currentConvId = conversations[0].id;
+                const conv = conversations.find((c) => c.id === currentConvId);
+                currentMessages = conv ? conv.messages : [];
+            } else {
+                // No conversations left – show the start screen.
+                currentConvId = null;
+                currentMessages = [];
+            }
+        }
+        saveUserData();
+        renderConversationList();
+        renderChatMessages();
+    });
 }
 
 function switchConversation(id) {
@@ -204,8 +204,26 @@ function renderChatMessages() {
         // Show empty state
         chatScroll.appendChild(emptyState);
         emptyState.style.display = "block";
-        // suggestionRow is inside emptyState, render suggestions
-        renderSuggestions();
+
+        const emptyTitle = document.getElementById("emptyTitle");
+        const emptyDesc = document.getElementById("emptyDesc");
+
+        if (conversations.length === 0) {
+            // True start screen – no chats exist yet at all
+            emptyState.classList.remove("compact");
+            emptyTitle.textContent = "سوال خود را درباره‌ی اسناد دانشگاه بپرسید";
+            emptyDesc.textContent =
+                "پاسخ‌ها فقط بر اساس اسنادی است که در پایگاه دانش این دستیار بارگذاری شده‌اند.";
+            suggestionRow.style.display = "flex";
+            renderSuggestions();
+        } else {
+            // A fresh, empty conversation (e.g. just started via "New chat")
+            emptyState.classList.add("compact");
+            emptyTitle.textContent = "گفتگوی جدید";
+            emptyDesc.textContent = "سوال خود را بنویسید تا گفتگو آغاز شود.";
+            suggestionRow.style.display = "none";
+            suggestionRow.innerHTML = "";
+        }
         return;
     }
 
@@ -298,19 +316,20 @@ function renderConversationList() {
 
         const renameBtn = document.createElement("button");
         renameBtn.className = "conv-btn";
-        renameBtn.textContent = "✎";
+        renameBtn.type = "button";
         renameBtn.title = "تغییر نام";
+        renameBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16.5 4.5l3 3L7 20H4v-3L16.5 4.5Z" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
         renameBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            const newTitle = prompt("عنوان جدید:", conv.title);
-            if (newTitle !== null) renameConversation(conv.id, newTitle);
+            startRenameConversation(li, conv);
         });
         actions.appendChild(renameBtn);
 
         const deleteBtn = document.createElement("button");
-        deleteBtn.className = "conv-btn";
-        deleteBtn.textContent = "🗑";
+        deleteBtn.className = "conv-btn conv-btn-delete";
+        deleteBtn.type = "button";
         deleteBtn.title = "حذف";
+        deleteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke-linecap="round"/></svg>`;
         deleteBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             deleteConversation(conv.id);
@@ -322,6 +341,74 @@ function renderConversationList() {
         convList.appendChild(li);
     });
 }
+
+// ========== INLINE RENAME ==========
+function startRenameConversation(li, conv) {
+    if (li.classList.contains("renaming")) return;
+    li.classList.add("renaming");
+    li.innerHTML = "";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "conv-rename-input";
+    input.value = conv.title || "";
+    li.appendChild(input);
+
+    let settled = false;
+    const finish = (shouldSave) => {
+        if (settled) return;
+        settled = true;
+        if (shouldSave) {
+            renameConversation(conv.id, input.value);
+        } else {
+            renderConversationList();
+        }
+    };
+
+    input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+            e.preventDefault();
+            finish(true);
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            finish(false);
+        }
+    });
+    input.addEventListener("blur", () => finish(true));
+
+    input.focus();
+    input.select();
+}
+
+// ========== CONFIRM MODAL ==========
+const confirmModal = document.getElementById("confirmModal");
+const confirmModalMessage = document.getElementById("confirmModalMessage");
+const confirmModalCancelBtn = document.getElementById("confirmModalCancel");
+const confirmModalConfirmBtn = document.getElementById("confirmModalConfirm");
+let confirmModalCallback = null;
+
+function openConfirmModal(message, onConfirm) {
+    confirmModalMessage.textContent = message;
+    confirmModalCallback = onConfirm;
+    confirmModal.classList.add("active");
+}
+
+function closeConfirmModal() {
+    confirmModal.classList.remove("active");
+    confirmModalCallback = null;
+}
+
+confirmModalCancelBtn.addEventListener("click", closeConfirmModal);
+confirmModalConfirmBtn.addEventListener("click", () => {
+    const cb = confirmModalCallback;
+    closeConfirmModal();
+    if (cb) cb();
+});
+confirmModal.addEventListener("click", (e) => {
+    if (e.target === confirmModal) closeConfirmModal();
+});
 
 // ========== AUTH HELPERS ==========
 function getToken() {
