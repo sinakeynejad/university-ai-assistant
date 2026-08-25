@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 logger = get_logger(__name__)
 
 # Supported document formats
-ALLOWED_EXTENSIONS = {".txt", ".md"}
+ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
 
 # Upload and process documents

@@ -1,10 +1,10 @@
 // ==========================================================================
-// تنظیمات: آدرس API بک‌اند. اگر بک‌اند را روی پورت یا دامنه‌ی دیگری اجرا
-// می‌کنید، فقط همین یک خط را تغییر دهید.
+// تنظیمات
 // ==========================================================================
 const API_BASE_URL = "http://localhost:8000";
-
 const TOKEN_KEY = "access_token";
+const USERNAME_KEY = "username";
+const CHAT_DATA_KEY = "chat_data_"; // will append username
 
 const SUGGESTED_QUESTIONS = [
     "شرایط ثبت‌نام در ترم جدید چیست؟",
@@ -12,60 +12,360 @@ const SUGGESTED_QUESTIONS = [
     "مراحل درخواست مرخصی تحصیلی چیست؟",
 ];
 
+// DOM references
 const chatScroll = document.getElementById("chatScroll");
 const emptyState = document.getElementById("emptyState");
 const suggestionRow = document.getElementById("suggestionRow");
 const composerForm = document.getElementById("composerForm");
 const questionInput = document.getElementById("questionInput");
 const sendBtn = document.getElementById("sendBtn");
-
 const kbDot = document.getElementById("kbDot");
 const kbStatusText = document.getElementById("kbStatusText");
-
 const toggleAdminBtn = document.getElementById("toggleAdmin");
 const closeAdminBtn = document.getElementById("closeAdmin");
 const adminDrawer = document.getElementById("adminDrawer");
 const drawerBackdrop = document.getElementById("drawerBackdrop");
-
 const uploadDrop = document.getElementById("uploadDrop");
 const fileInput = document.getElementById("fileInput");
 const uploadStatus = document.getElementById("uploadStatus");
 const docList = document.getElementById("docList");
 const docCount = document.getElementById("docCount");
-
 const logoutBtn = document.getElementById("logoutBtn");
 
-let conversationHistory = [];
+// Sidebar elements
+const sidebar = document.getElementById("sidebar");
+const convList = document.getElementById("convList");
+const newChatBtn = document.getElementById("newChatBtn");
+const closeSidebarBtn = document.getElementById("closeSidebar");
+const toggleSidebarBtn = document.getElementById("toggleSidebar");
+
+// State
+let conversations = [];
+let currentConvId = null;
+let currentMessages = []; // reference to messages of current conversation
 let currentUser = null;
+
+// ========== STORAGE ==========
+function getChatDataKey() {
+    const username = localStorage.getItem(USERNAME_KEY);
+    if (!username) return null;
+    return `${CHAT_DATA_KEY}${username}`;
+}
+
+function loadUserData() {
+    const key = getChatDataKey();
+    if (!key) return null;
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+            const data = JSON.parse(raw);
+            if (
+                data &&
+                data.conversations &&
+                Array.isArray(data.conversations)
+            ) {
+                return data;
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to load chat data:", e);
+    }
+    return null;
+}
+
+function saveUserData() {
+    const key = getChatDataKey();
+    if (!key) return;
+    const data = {
+        conversations: conversations,
+        currentId: currentConvId,
+    };
+    try {
+        localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+        console.warn("Failed to save chat data:", e);
+    }
+}
+
+function loadConversations() {
+    const data = loadUserData();
+    if (data) {
+        conversations = data.conversations || [];
+        currentConvId = data.currentId || null;
+        // Ensure currentConvId is valid, otherwise set to first or create new
+        if (
+            currentConvId &&
+            !conversations.find((c) => c.id === currentConvId)
+        ) {
+            currentConvId = null;
+        }
+        if (!currentConvId && conversations.length > 0) {
+            currentConvId = conversations[0].id;
+        }
+        if (!currentConvId) {
+            // No conversations – create default
+            createNewConversation(false); // don't save immediately, we'll save after
+            saveUserData();
+        }
+    } else {
+        // No data – create default
+        conversations = [];
+        currentConvId = null;
+        createNewConversation(false);
+        saveUserData();
+    }
+    // Set currentMessages to the messages of the active conversation
+    const conv = conversations.find((c) => c.id === currentConvId);
+    currentMessages = conv ? conv.messages : [];
+    return conv;
+}
+
+function createNewConversation(save = true) {
+    const id = `conv_${Date.now()}`;
+    const title = `گفتگوی جدید (${conversations.length + 1})`;
+    const newConv = {
+        id,
+        title,
+        messages: [],
+        createdAt: new Date().toISOString(),
+    };
+    conversations.push(newConv);
+    currentConvId = id;
+    currentMessages = newConv.messages;
+    if (save) saveUserData();
+    renderConversationList();
+    renderChatMessages();
+    return newConv;
+}
+
+function deleteConversation(id) {
+    if (conversations.length <= 1) {
+        alert("حداقل یک گفتگو باید وجود داشته باشد.");
+        return;
+    }
+    if (!confirm("آیا این گفتگو حذف شود؟")) return;
+    const idx = conversations.findIndex((c) => c.id === id);
+    if (idx === -1) return;
+    conversations.splice(idx, 1);
+    if (currentConvId === id) {
+        // switch to another
+        currentConvId = conversations[0].id;
+        const conv = conversations.find((c) => c.id === currentConvId);
+        currentMessages = conv ? conv.messages : [];
+    }
+    saveUserData();
+    renderConversationList();
+    renderChatMessages();
+}
+
+function switchConversation(id) {
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv) return;
+    currentConvId = id;
+    currentMessages = conv.messages;
+    saveUserData();
+    renderChatMessages();
+    renderConversationList();
+    // Close sidebar on mobile if needed
+    if (window.innerWidth < 768) {
+        sidebar.classList.remove("open");
+    }
+}
+
+function renameConversation(id, newTitle) {
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv) return;
+    conv.title = newTitle.trim() || "گفتگو";
+    saveUserData();
+    renderConversationList();
+}
+
+function getCurrentConv() {
+    return conversations.find((c) => c.id === currentConvId);
+}
+
+// ========== RENDER CHAT UI ==========
+function renderChatMessages() {
+    // Clear chatScroll but keep emptyState and suggestionRow? Actually we need to remove all children except emptyState
+    // We'll rebuild the chat area based on currentMessages
+    // Remove all child nodes from chatScroll except emptyState (which might be hidden)
+    // Simpler: clear chatScroll, then append messages, then re-append emptyState if needed
+    const chatScroll = document.getElementById("chatScroll");
+    // Store emptyState reference
+    const emptyState = document.getElementById("emptyState");
+    const suggestionRow = document.getElementById("suggestionRow");
+
+    // Clear all children
+    while (chatScroll.firstChild) {
+        chatScroll.removeChild(chatScroll.firstChild);
+    }
+
+    if (!currentMessages || currentMessages.length === 0) {
+        // Show empty state
+        chatScroll.appendChild(emptyState);
+        emptyState.style.display = "block";
+        // suggestionRow is inside emptyState, render suggestions
+        renderSuggestions();
+        return;
+    }
+
+    emptyState.style.display = "none";
+    // Re-render all messages from currentMessages
+    currentMessages.forEach((msg) => {
+        appendMessage(msg.role, msg.content, null, false);
+    });
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+}
+
+// Override appendMessage to also save to currentMessages when save=true
+function appendMessage(role, text, sources, save = true) {
+    // Create DOM row
+    const row = document.createElement("div");
+    row.className = `msg-row ${role}`;
+
+    if (role === "assistant") {
+        const label = document.createElement("div");
+        label.className = "assistant-label";
+        label.textContent = "دستیار دانشگاه";
+        row.appendChild(label);
+    }
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+    bubble.innerHTML =
+        role === "assistant" ? formatCitations(text) : escapeHtml(text);
+    row.appendChild(bubble);
+
+    if (sources && sources.length) {
+        renderSourcesBlock(row, sources);
+    }
+
+    chatScroll.appendChild(row);
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+
+    if (save) {
+        // Add to currentMessages if not already present (avoid duplicates)
+        // We'll check if last message matches to prevent double-save
+        const last = currentMessages.length
+            ? currentMessages[currentMessages.length - 1]
+            : null;
+        if (last && last.role === role && last.content === text) {
+            // already there, just update sources maybe
+        } else {
+            currentMessages.push({ role, content: text });
+            // If this is the first user message, update conversation title
+            if (role === "user" && currentMessages.length === 1) {
+                const conv = getCurrentConv();
+                if (conv) {
+                    let title = text.slice(0, 30);
+                    if (title.length < text.length) title += "...";
+                    conv.title = title;
+                }
+            }
+            saveUserData();
+            renderConversationList(); // update title
+        }
+    }
+}
+
+// Helper to update messages after streaming (called from handleSubmit)
+function addAssistantMessage(text) {
+    currentMessages.push({ role: "assistant", content: text });
+    saveUserData();
+    renderConversationList(); // in case title changed
+}
+
+// ========== RENDER SIDEBAR ==========
+function renderConversationList() {
+    convList.innerHTML = "";
+    if (!conversations || conversations.length === 0) {
+        convList.innerHTML =
+            '<li class="conv-empty">هیچ گفتگویی وجود ندارد.</li>';
+        return;
+    }
+    conversations.forEach((conv) => {
+        const li = document.createElement("li");
+        li.className = "conv-item";
+        if (conv.id === currentConvId) {
+            li.classList.add("active");
+        }
+        const titleSpan = document.createElement("span");
+        titleSpan.textContent = conv.title || "گفتگو";
+        li.appendChild(titleSpan);
+
+        const actions = document.createElement("div");
+        actions.className = "conv-actions";
+
+        const renameBtn = document.createElement("button");
+        renameBtn.className = "conv-btn";
+        renameBtn.textContent = "✎";
+        renameBtn.title = "تغییر نام";
+        renameBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const newTitle = prompt("عنوان جدید:", conv.title);
+            if (newTitle !== null) renameConversation(conv.id, newTitle);
+        });
+        actions.appendChild(renameBtn);
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "conv-btn";
+        deleteBtn.textContent = "🗑";
+        deleteBtn.title = "حذف";
+        deleteBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            deleteConversation(conv.id);
+        });
+        actions.appendChild(deleteBtn);
+
+        li.appendChild(actions);
+        li.addEventListener("click", () => switchConversation(conv.id));
+        convList.appendChild(li);
+    });
+}
 
 // ========== AUTH HELPERS ==========
 function getToken() {
-    return localStorage.getItem(TOKEN_KEY);
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token || token === "null" || token === "undefined") return null;
+    return token.trim();
 }
 
 function setToken(token) {
-    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(TOKEN_KEY, token.trim());
 }
 
 function clearToken() {
     localStorage.removeItem(TOKEN_KEY);
 }
 
+function getUsername() {
+    return localStorage.getItem(USERNAME_KEY);
+}
+
+function setUsername(username) {
+    localStorage.setItem(USERNAME_KEY, username);
+}
+
+function clearUsername() {
+    localStorage.removeItem(USERNAME_KEY);
+}
+
 function isLoggedIn() {
     return !!getToken();
+}
+
+function authHeaders() {
+    const token = getToken();
+    const headers = { "Content-Type": "application/json" };
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
 }
 
 function authHeader() {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-function authHeaders() {
-    const token = getToken();
-    return {
-        Authorization: token ? `Bearer ${token}` : "",
-        "Content-Type": "application/json",
-    };
 }
 
 // ========== AUTH UI ==========
@@ -74,11 +374,13 @@ function checkAuth() {
     if (isLoggedIn()) {
         modal.classList.remove("active");
         logoutBtn.style.display = "block";
-        // Optionally fetch user info here
+        // Load user conversations
+        loadConversations();
+        renderChatMessages();
+        renderConversationList();
     } else {
         modal.classList.add("active");
         logoutBtn.style.display = "none";
-        // Clear chat UI maybe
     }
 }
 
@@ -104,27 +406,21 @@ async function handleLogin(e) {
             body: formData,
         });
 
-        console.log("Login response status:", res.status);
-
         if (!res.ok) {
             const err = await res.json();
             throw new Error(err.detail || "نام کاربری یا رمز عبور اشتباه است.");
         }
 
         const data = await res.json();
-        console.log("Login response data:", data); // <-- see if access_token exists
-
         if (data.access_token) {
             setToken(data.access_token);
-            console.log("Token stored:", getToken()); // <-- verify
+            setUsername(username);
             checkAuth();
             refreshDocuments();
-        } else {
-            console.error("No access_token in response");
+            // Load conversations is called inside checkAuth
         }
     } catch (err) {
         errorEl.textContent = err.message;
-        console.error("Login error:", err);
     }
 }
 
@@ -153,9 +449,12 @@ async function handleRegister(e) {
         }
 
         const data = await res.json();
-        setToken(data.access_token);
-        checkAuth();
-        refreshDocuments();
+        if (data.access_token) {
+            setToken(data.access_token);
+            setUsername(username);
+            checkAuth();
+            refreshDocuments();
+        }
     } catch (err) {
         errorEl.textContent = err.message;
     }
@@ -163,126 +462,13 @@ async function handleRegister(e) {
 
 function logout() {
     clearToken();
-    checkAuth();
-    // Reset conversation UI
-    document.getElementById("chatScroll").innerHTML = `
-    <div class="empty-state" id="emptyState">
-      <div class="empty-glyph" aria-hidden="true">؟</div>
-      <h2>سوال خود را درباره‌ی اسناد دانشگاه بپرسید</h2>
-      <p>پاسخ‌ها فقط بر اساس اسنادی است که در پایگاه دانش این دستیار بارگذاری شده‌اند.</p>
-      <div class="suggestion-row" id="suggestionRow"></div>
-    </div>
-  `;
-    conversationHistory = [];
-    renderSuggestions();
+    clearUsername();
+    // DO NOT clear chat data – it stays per user
+    // Reset UI
+    location.reload();
 }
 
-// ========== INIT ==========
-function init() {
-    renderSuggestions();
-    checkAuth();
-    checkHealth();
-    refreshDocuments();
-    autoResizeTextarea();
-
-    composerForm.addEventListener("submit", handleSubmit);
-    questionInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            composerForm.requestSubmit();
-        }
-    });
-    questionInput.addEventListener("input", autoResizeTextarea);
-
-    toggleAdminBtn.addEventListener("click", () => setDrawer(true));
-    closeAdminBtn.addEventListener("click", () => setDrawer(false));
-    drawerBackdrop.addEventListener("click", () => setDrawer(false));
-
-    uploadDrop.addEventListener("click", () => fileInput.click());
-    fileInput.addEventListener("change", () => handleUpload(fileInput.files));
-
-    ["dragover", "dragenter"].forEach((evt) =>
-        uploadDrop.addEventListener(evt, (e) => {
-            e.preventDefault();
-            uploadDrop.classList.add("dragover");
-        }),
-    );
-    ["dragleave", "drop"].forEach((evt) =>
-        uploadDrop.addEventListener(evt, (e) => {
-            e.preventDefault();
-            uploadDrop.classList.remove("dragover");
-        }),
-    );
-    uploadDrop.addEventListener("drop", (e) => {
-        if (e.dataTransfer.files.length) handleUpload(e.dataTransfer.files);
-    });
-
-    // Auth events
-    document
-        .getElementById("loginForm")
-        .addEventListener("submit", handleLogin);
-    document
-        .getElementById("registerForm")
-        .addEventListener("submit", handleRegister);
-    document.getElementById("logoutBtn").addEventListener("click", logout);
-
-    // Tab switching
-    document.getElementById("tabLogin").addEventListener("click", function () {
-        document
-            .querySelectorAll(".auth-tab")
-            .forEach((t) => t.classList.remove("active"));
-        this.classList.add("active");
-        document.getElementById("loginForm").classList.add("active");
-        document.getElementById("registerForm").classList.remove("active");
-    });
-    document
-        .getElementById("tabRegister")
-        .addEventListener("click", function () {
-            document
-                .querySelectorAll(".auth-tab")
-                .forEach((t) => t.classList.remove("active"));
-            this.classList.add("active");
-            document.getElementById("registerForm").classList.add("active");
-            document.getElementById("loginForm").classList.remove("active");
-        });
-}
-
-function autoResizeTextarea() {
-    questionInput.style.height = "auto";
-    questionInput.style.height =
-        Math.min(questionInput.scrollHeight, 160) + "px";
-}
-
-function renderSuggestions() {
-    suggestionRow.innerHTML = "";
-    SUGGESTED_QUESTIONS.forEach((q) => {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "suggestion-chip";
-        chip.textContent = q;
-        chip.addEventListener("click", () => {
-            questionInput.value = q;
-            autoResizeTextarea();
-            composerForm.requestSubmit();
-        });
-        suggestionRow.appendChild(chip);
-    });
-}
-
-// ========== HEALTH CHECK ==========
-async function checkHealth() {
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/health`);
-        if (!res.ok) throw new Error("bad status");
-        kbDot.className = "kb-dot online";
-        kbStatusText.textContent = "متصل به سرور";
-    } catch (err) {
-        kbDot.className = "kb-dot offline";
-        kbStatusText.textContent = "عدم اتصال به بک‌اند";
-    }
-}
-
-// ========== CHAT ==========
+// ========== CHAT SUBMISSION ==========
 async function handleSubmit(e) {
     e.preventDefault();
     if (!isLoggedIn()) {
@@ -293,9 +479,13 @@ async function handleSubmit(e) {
     const question = questionInput.value.trim();
     if (!question) return;
 
-    emptyState.style.display = "none";
-    appendMessage("user", question);
-    conversationHistory.push({ role: "user", content: question });
+    // Ensure we have a current conversation
+    if (!getCurrentConv()) {
+        createNewConversation();
+    }
+
+    // Add user message
+    appendMessage("user", question); // this pushes to currentMessages and saves
 
     questionInput.value = "";
     autoResizeTextarea();
@@ -304,22 +494,29 @@ async function handleSubmit(e) {
     const loadingEl = appendLoadingMessage();
 
     try {
+        const token = getToken();
+        if (!token) {
+            throw new Error("توکن وجود ندارد. لطفاً مجدداً وارد شوید.");
+        }
+
+        // Get last few messages from current conversation
+        const history = currentMessages.slice(-8);
+
         const res = await fetch(`${API_BASE_URL}/api/chat`, {
             method: "POST",
             headers: authHeaders(),
             body: JSON.stringify({
                 question,
-                history: conversationHistory.slice(-8),
+                history: history,
             }),
         });
 
         if (!res.ok) {
             if (res.status === 401) {
                 clearToken();
+                clearUsername();
                 checkAuth();
-                throw new Error(
-                    "نشست شما منقضی شده است. لطفاً مجدداً وارد شوید.",
-                );
+                throw new Error("نشست شما منقضی شد.");
             }
             const errBody = await res.json().catch(() => ({}));
             throw new Error(errBody.detail || `خطای سرور (${res.status})`);
@@ -363,7 +560,10 @@ async function handleSubmit(e) {
             }
         }
 
-        conversationHistory.push({ role: "assistant", content: fullAnswer });
+        // Add assistant message to currentMessages
+        currentMessages.push({ role: "assistant", content: fullAnswer });
+        saveUserData();
+        renderConversationList(); // update title if needed
         kbDot.className = "kb-dot online";
         kbStatusText.textContent = "متصل به سرور";
     } catch (err) {
@@ -380,6 +580,7 @@ async function handleSubmit(e) {
     }
 }
 
+// ========== UI HELPERS ==========
 function appendLoadingMessage() {
     const row = document.createElement("div");
     row.className = "msg-row assistant";
@@ -482,31 +683,6 @@ function renderSourcesBlock(rowEl, sources) {
     chatScroll.scrollTop = chatScroll.scrollHeight;
 }
 
-function appendMessage(role, text, sources) {
-    const row = document.createElement("div");
-    row.className = `msg-row ${role}`;
-
-    if (role === "assistant") {
-        const label = document.createElement("div");
-        label.className = "assistant-label";
-        label.textContent = "دستیار دانشگاه";
-        row.appendChild(label);
-    }
-
-    const bubble = document.createElement("div");
-    bubble.className = "msg-bubble";
-    bubble.innerHTML =
-        role === "assistant" ? formatCitations(text) : escapeHtml(text);
-    row.appendChild(bubble);
-
-    if (sources && sources.length) {
-        renderSourcesBlock(row, sources);
-    }
-
-    chatScroll.appendChild(row);
-    chatScroll.scrollTop = chatScroll.scrollHeight;
-}
-
 function escapeHtml(str) {
     const div = document.createElement("div");
     div.textContent = str;
@@ -530,7 +706,42 @@ function toPersianDigits(input) {
     return String(input).replace(/[0-9]/g, (d) => map[d]);
 }
 
-// ========== ADMIN PANEL ==========
+function autoResizeTextarea() {
+    questionInput.style.height = "auto";
+    questionInput.style.height =
+        Math.min(questionInput.scrollHeight, 160) + "px";
+}
+
+function renderSuggestions() {
+    suggestionRow.innerHTML = "";
+    SUGGESTED_QUESTIONS.forEach((q) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "suggestion-chip";
+        chip.textContent = q;
+        chip.addEventListener("click", () => {
+            questionInput.value = q;
+            autoResizeTextarea();
+            composerForm.requestSubmit();
+        });
+        suggestionRow.appendChild(chip);
+    });
+}
+
+// ========== HEALTH ==========
+async function checkHealth() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/health`);
+        if (!res.ok) throw new Error("bad status");
+        kbDot.className = "kb-dot online";
+        kbStatusText.textContent = "متصل به سرور";
+    } catch (err) {
+        kbDot.className = "kb-dot offline";
+        kbStatusText.textContent = "عدم اتصال به بک‌اند";
+    }
+}
+
+// ========== ADMIN ==========
 function setDrawer(open) {
     adminDrawer.classList.toggle("open", open);
     drawerBackdrop.classList.toggle("open", open);
@@ -545,6 +756,7 @@ async function refreshDocuments() {
         if (!res.ok) {
             if (res.status === 401) {
                 clearToken();
+                clearUsername();
                 checkAuth();
                 return;
             }
@@ -594,6 +806,7 @@ async function deleteDocument(name) {
         if (!res.ok) {
             if (res.status === 401) {
                 clearToken();
+                clearUsername();
                 checkAuth();
                 return;
             }
@@ -623,13 +836,14 @@ async function handleUpload(fileList) {
     try {
         const res = await fetch(`${API_BASE_URL}/api/documents/upload`, {
             method: "POST",
-            headers: authHeader(), // only Authorization, no Content-Type
+            headers: authHeader(),
             body: formData,
         });
 
         if (!res.ok) {
             if (res.status === 401) {
                 clearToken();
+                clearUsername();
                 checkAuth();
                 throw new Error("نشست منقضی شد.");
             }
@@ -649,6 +863,93 @@ async function handleUpload(fileList) {
     } finally {
         fileInput.value = "";
     }
+}
+
+// ========== SIDEBAR TOGGLE ==========
+function toggleSidebar() {
+    sidebar.classList.toggle("open");
+    drawerBackdrop.classList.toggle("open");
+}
+
+// ========== INIT ==========
+function init() {
+    // Sidebar events
+    toggleSidebarBtn.addEventListener("click", toggleSidebar);
+    closeSidebarBtn.addEventListener("click", toggleSidebar);
+    drawerBackdrop.addEventListener("click", toggleSidebar);
+    newChatBtn.addEventListener("click", () => {
+        createNewConversation();
+        renderChatMessages();
+        renderConversationList();
+        if (window.innerWidth < 768) toggleSidebar();
+    });
+
+    renderSuggestions();
+    checkAuth();
+    checkHealth();
+    refreshDocuments();
+    autoResizeTextarea();
+
+    composerForm.addEventListener("submit", handleSubmit);
+    questionInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            composerForm.requestSubmit();
+        }
+    });
+    questionInput.addEventListener("input", autoResizeTextarea);
+
+    toggleAdminBtn.addEventListener("click", () => setDrawer(true));
+    closeAdminBtn.addEventListener("click", () => setDrawer(false));
+    drawerBackdrop.addEventListener("click", () => setDrawer(false));
+
+    uploadDrop.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => handleUpload(fileInput.files));
+
+    ["dragover", "dragenter"].forEach((evt) =>
+        uploadDrop.addEventListener(evt, (e) => {
+            e.preventDefault();
+            uploadDrop.classList.add("dragover");
+        }),
+    );
+    ["dragleave", "drop"].forEach((evt) =>
+        uploadDrop.addEventListener(evt, (e) => {
+            e.preventDefault();
+            uploadDrop.classList.remove("dragover");
+        }),
+    );
+    uploadDrop.addEventListener("drop", (e) => {
+        if (e.dataTransfer.files.length) handleUpload(e.dataTransfer.files);
+    });
+
+    // Auth events
+    document
+        .getElementById("loginForm")
+        .addEventListener("submit", handleLogin);
+    document
+        .getElementById("registerForm")
+        .addEventListener("submit", handleRegister);
+    document.getElementById("logoutBtn").addEventListener("click", logout);
+
+    // Tab switching
+    document.getElementById("tabLogin").addEventListener("click", function () {
+        document
+            .querySelectorAll(".auth-tab")
+            .forEach((t) => t.classList.remove("active"));
+        this.classList.add("active");
+        document.getElementById("loginForm").classList.add("active");
+        document.getElementById("registerForm").classList.remove("active");
+    });
+    document
+        .getElementById("tabRegister")
+        .addEventListener("click", function () {
+            document
+                .querySelectorAll(".auth-tab")
+                .forEach((t) => t.classList.remove("active"));
+            this.classList.add("active");
+            document.getElementById("registerForm").classList.add("active");
+            document.getElementById("loginForm").classList.remove("active");
+        });
 }
 
 // Start the app

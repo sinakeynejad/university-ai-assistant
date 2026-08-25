@@ -23,9 +23,13 @@ def get_password_hash(password: str) -> str:
         
         password = password_bytes.decode('utf-8', errors='ignore')
     return pwd_context.hash(password)
+# app/auth/security.py
+
+from datetime import datetime, timedelta, timezone  # add timezone
+
 def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -33,5 +37,6 @@ def decode_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError:
+    except JWTError as e:
+        print(f"JWT decode error: {e}") 
         return None

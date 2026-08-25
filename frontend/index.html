@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=2" />
 </head>
 
 <body>
@@ -16,16 +16,23 @@
   <div class="app-shell">
 
     <header class="app-header">
-      <div class="header-brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 40 40" width="34" height="34">
-            <polygon points="20,4 36,12 36,28 20,36 4,28 4,12" fill="none" stroke="currentColor" stroke-width="1.4" />
-            <polygon points="20,12 28,16 28,24 20,28 12,24 12,16" fill="currentColor" opacity="0.9" />
+      <div class="header-left">
+        <button class="btn-icon" id="toggleSidebar" aria-label="تغییر وضعیت نوار کناری">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h18M3 6h18M3 18h18" stroke="currentColor" stroke-linecap="round" />
           </svg>
-        </div>
-        <div class="brand-text">
-          <span class="brand-eyebrow">دانشگاه صنعتی خواجه نصیرالدین طوسی</span>
-          <h1>دستیار هوشمند اسناد دانشگاه</h1>
+        </button>
+        <div class="header-brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40" width="34" height="34">
+              <polygon points="20,4 36,12 36,28 20,36 4,28 4,12" fill="none" stroke="currentColor" stroke-width="1.4" />
+              <polygon points="20,12 28,16 28,24 20,28 12,24 12,16" fill="currentColor" opacity="0.9" />
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-eyebrow">دانشگاه صنعتی خواجه نصیرالدین طوسی</span>
+            <h1>دستیار هوشمند اسناد دانشگاه</h1>
+          </div>
         </div>
       </div>
 
@@ -43,6 +50,21 @@
 
     <main class="app-main">
 
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-inner">
+          <div class="sidebar-head">
+            <h2>گفتگوها</h2>
+            <button class="btn-icon" id="closeSidebar" aria-label="بستن نوار کناری">✕</button>
+          </div>
+          <button class="btn-new-chat" id="newChatBtn">+ گفتگوی جدید</button>
+          <ul class="conv-list" id="convList">
+            <li class="conv-empty">هنوز گفتگویی وجود ندارد.</li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- Chat Panel -->
       <section class="chat-panel">
         <div class="chat-scroll" id="chatScroll">
           <div class="empty-state" id="emptyState">
@@ -64,6 +86,7 @@
         </form>
       </section>
 
+      <!-- Admin Drawer -->
       <aside class="admin-drawer" id="adminDrawer">
         <div class="admin-drawer-inner">
           <div class="admin-head">
@@ -72,14 +95,14 @@
           </div>
 
           <p class="admin-hint">
-            فایل‌های متنی (TXT) دانشگاه را برای این دستیار بارگذاری کنید تا در پاسخ‌ها استفاده شوند.
+            فایل‌های متنی (TXT, MD) و PDF را برای این دستیار بارگذاری کنید تا در پاسخ‌ها استفاده شوند.
           </p>
 
           <label class="upload-drop" id="uploadDrop" for="fileInput">
             <span class="upload-drop-title">فایل‌ها را اینجا رها کنید</span>
-            <span class="upload-drop-sub">یا برای انتخاب کلیک کنید (فقط فایل‌های TXT)</span>
+            <span class="upload-drop-sub">یا برای انتخاب کلیک کنید (فایل‌های TXT, MD, PDF)</span>
           </label>
-          <input type="file" id="fileInput" multiple accept=".txt,.md" hidden />
+          <input type="file" id="fileInput" multiple accept=".txt,.md,.pdf" hidden />
 
           <div class="upload-status" id="uploadStatus"></div>
 
@@ -92,11 +115,10 @@
       </aside>
 
       <div class="drawer-backdrop" id="drawerBackdrop"></div>
-
     </main>
   </div>
 
-  <!-- Login/Register Modal -->
+  <!-- Auth Modal -->
   <div class="auth-modal" id="authModal">
     <div class="auth-modal-content">
       <div class="auth-tabs">
@@ -104,7 +126,6 @@
         <button class="auth-tab" data-tab="register" id="tabRegister">ثبت‌نام</button>
       </div>
 
-      <!-- Login Form -->
       <form id="loginForm" class="auth-form active">
         <h3>ورود به سامانه</h3>
         <div class="auth-field">
@@ -119,7 +140,6 @@
         <button type="submit" class="auth-btn">ورود</button>
       </form>
 
-      <!-- Register Form -->
       <form id="registerForm" class="auth-form">
         <h3>ثبت‌نام جدید</h3>
         <div class="auth-field">
