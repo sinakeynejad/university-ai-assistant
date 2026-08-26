@@ -5,7 +5,11 @@ __pycache__/
 
 # C extensions
 *.so
-
+# RAG data (generated at runtime)
+backend/data/uploads/
+backend/data/chroma_db/
+backend/data/raw/
+backend/data/repaired_docs/
 # Distribution / packaging
 .Python
 build/

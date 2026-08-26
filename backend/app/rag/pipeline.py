@@ -131,6 +131,7 @@ def rewrite_query(question: str) -> str:
 # Answer a user question using the RAG pipeline (Non-streaming)
 def answer_question(
     question: str,
+    user_id: int,
     history: Optional[List[ChatMessage]] = None,
     top_k: Optional[int] = None
 ) -> Dict:
@@ -139,7 +140,6 @@ def answer_question(
     k = top_k or settings.TOP_K
 
     embedding_model = get_embedding_model()
-    vector_store = get_vector_store()
     hybrid_search = get_hybrid_search()
     llm_client = get_llm_client()
 
@@ -149,11 +149,12 @@ def answer_question(
     retrieved_chunks = hybrid_search.search(
         query_text=search_query,
         query_embedding=query_embedding,
+        user_id=user_id,
         top_k=k,
     )
 
     logger.info(
-        f"{len(retrieved_chunks)} relevant chunks retrieved for the question."
+        f"{len(retrieved_chunks)} relevant chunks retrieved for user {user_id}."
     )
 
     messages = _build_messages(
@@ -183,6 +184,7 @@ def answer_question(
 # Streaming variant for live chunk-by-chunk response
 def answer_question_stream(
     question: str,
+    user_id: int,
     history: Optional[List[ChatMessage]] = None,
     top_k: Optional[int] = None
 ) -> Generator[str, None, None]:
@@ -192,7 +194,6 @@ def answer_question_stream(
     k = top_k or settings.TOP_K
 
     embedding_model = get_embedding_model()
-    vector_store = get_vector_store()
     hybrid_search = get_hybrid_search()
     llm_client = get_llm_client()
 
@@ -204,15 +205,16 @@ def answer_question_stream(
     yield json.dumps({"type": "status", "data": "در حال جستجو در اسناد و قوانین دانشگاه..."}) + "\n"
     query_embedding = embedding_model.embed_query(search_query)
 
-    # Retrieve chunks from vector store
+    # Retrieve chunks from vector store, scoped to this user only
     retrieved_chunks = hybrid_search.search(
         query_text=search_query,
         query_embedding=query_embedding,
+        user_id=user_id,
         top_k=k,
     )
 
     logger.info(
-        f"{len(retrieved_chunks)} relevant chunks retrieved for streaming response."
+        f"{len(retrieved_chunks)} relevant chunks retrieved for user {user_id} (streaming)."
     )
 
     # Build message chain
@@ -245,7 +247,7 @@ def answer_question_stream(
 
 
 # Process a document and store its chunks in the vector database
-def ingest_document(document_name: str, raw_text: str) -> int:
+def ingest_document(document_name: str, raw_text: str, user_id: int) -> int:
     from app.rag.chunking import chunk_text
 
     settings = get_settings()
@@ -270,9 +272,11 @@ def ingest_document(document_name: str, raw_text: str) -> int:
     result = vector_store.add_chunks(
         document_name,
         chunks,
-        embeddings
+        embeddings,
+        user_id=user_id,
     )
 
-    get_hybrid_search().refresh()
+    # Only rebuild this user's lexical index, not everyone's
+    get_hybrid_search().refresh(user_id)
 
     return result

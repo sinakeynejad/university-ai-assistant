@@ -3,6 +3,10 @@ Hybrid search layer.
 
 Combines semantic search results from ChromaDB
 with lexical search results using Reciprocal Rank Fusion.
+
+Both the semantic and lexical sides are scoped per user_id so
+one account can never retrieve chunks from another account's
+documents.
 """
 
 from typing import Any, Dict, List
@@ -85,6 +89,9 @@ def reciprocal_rank_fusion(
 class HybridSearch:
     """
     Coordinates semantic and lexical retrieval.
+
+    Keeps one in-memory BM25 index per user_id so lexical search
+    never mixes chunks across accounts.
     """
 
     def __init__(
@@ -94,19 +101,21 @@ class HybridSearch:
         # Existing ChromaDB VectorStore
         self.vector_store = vector_store
 
-        # Build lexical index from ChromaDB
-        self.lexical_index = LexicalIndex()
+        # One lexical index per user, built lazily
+        self._lexical_indexes: Dict[int, LexicalIndex] = {}
 
-        self.refresh()
-
-    def refresh(self) -> None:
+    def refresh(self, user_id: int) -> None:
         """
-        Rebuild lexical index from the current
-        contents of ChromaDB.
+        Rebuild the lexical index for a single user from the
+        current contents of ChromaDB.
+
+        Call this after any ingest/delete that affects that user's
+        documents.
         """
 
-        # Retrieve all stored chunks
+        # Retrieve all chunks that belong to this user
         data = self.vector_store.collection.get(
+            where={"user_id": user_id},
             include=[
                 "documents",
                 "metadatas",
@@ -165,19 +174,27 @@ class HybridSearch:
                 }
             )
 
-        # Rebuild lexical index
-        self.lexical_index.build(
-            chunks
-        )
+        # Rebuild (or create) this user's lexical index
+        index = self._lexical_indexes.setdefault(user_id, LexicalIndex())
+        index.build(chunks)
+
+    def _get_lexical_index(self, user_id: int) -> LexicalIndex:
+        # Build the index on first use for a user that hasn't
+        # been refreshed yet (e.g. right after server restart).
+        if user_id not in self._lexical_indexes:
+            self.refresh(user_id)
+
+        return self._lexical_indexes[user_id]
 
     def search(
         self,
         query_text: str,
         query_embedding: List[float],
+        user_id: int,
         top_k: int = 4,
     ) -> List[Dict[str, Any]]:
         """
-        Perform hybrid search.
+        Perform hybrid search scoped to a single user's documents.
 
         1. Semantic search
         2. Lexical search
@@ -199,6 +216,7 @@ class HybridSearch:
             self.vector_store.similarity_search(
                 query_embedding=query_embedding,
                 top_k=candidate_k,
+                user_id=user_id,
             )
         )
 
@@ -206,8 +224,10 @@ class HybridSearch:
         # Lexical Search
         # -----------------------------
 
+        lexical_index = self._get_lexical_index(user_id)
+
         lexical_results = (
-            self.lexical_index.search(
+            lexical_index.search(
                 query=query_text,
                 top_k=candidate_k,
             )
@@ -234,6 +254,9 @@ class HybridSearch:
 def get_hybrid_search() -> HybridSearch:
     """
     Create and cache the HybridSearch instance.
+
+    The instance itself is a shared singleton, but it keeps
+    separate lexical indexes per user internally.
     """
 
     vector_store = get_vector_store()

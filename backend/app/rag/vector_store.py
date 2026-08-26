@@ -6,6 +6,10 @@ Responsibilities:
 - Perform similarity searches
 - List stored documents
 - Delete documents
+
+All operations are scoped to a single user via the "user_id" field
+stored in each chunk's metadata. This keeps every account's documents
+isolated inside one shared Chroma collection.
 """
 
 from functools import lru_cache
@@ -47,19 +51,21 @@ class VectorStore:
         document_name: str,
         chunks: List[str],
         embeddings: List[List[float]],
+        user_id: int,
     ) -> int:
 
         # Generate a unique ID for each chunk
         ids = [
-            f"{document_name}::{i}::{uuid.uuid4().hex[:8]}"
+            f"{user_id}::{document_name}::{i}::{uuid.uuid4().hex[:8]}"
             for i in range(len(chunks))
         ]
 
-        # Store metadata for each chunk
+        # Store metadata for each chunk, tagged with its owner
         metadatas = [
             {
                 "document_name": document_name,
-                "chunk_index": i
+                "chunk_index": i,
+                "user_id": user_id,
             }
             for i in range(len(chunks))
         ]
@@ -73,7 +79,8 @@ class VectorStore:
         )
 
         logger.info(
-            f"{len(chunks)} chunks from document '{document_name}' were stored."
+            f"{len(chunks)} chunks from document '{document_name}' "
+            f"were stored for user {user_id}."
         )
 
         return len(chunks)
@@ -81,13 +88,15 @@ class VectorStore:
     def similarity_search(
         self,
         query_embedding: List[float],
-        top_k: int
+        top_k: int,
+        user_id: int,
     ) -> List[Dict[str, Any]]:
 
-        # Search for the most similar chunks
+        # Search for the most similar chunks, restricted to this user's docs
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
+            where={"user_id": user_id},
         )
 
         output = []
@@ -123,9 +132,12 @@ class VectorStore:
 
         return output
 
-    def list_documents(self) -> List[str]:
-        # Retrieve metadata for all stored chunks
-        all_items = self.collection.get(include=cast(Include, ["metadatas"]))
+    def list_documents(self, user_id: int) -> List[str]:
+        # Retrieve metadata for all chunks belonging to this user
+        all_items = self.collection.get(
+            where={"user_id": user_id},
+            include=cast(Include, ["metadatas"]),
+        )
 
         # Extract unique document names
         stored_metadatas = all_items.get("metadatas") or []
@@ -137,14 +149,21 @@ class VectorStore:
 
         return sorted(cast(List[str], list(names)))
 
-    def delete_document(self, document_name: str) -> None:
-        # Delete all chunks belonging to the specified document
+    def delete_document(self, document_name: str, user_id: int) -> None:
+        # Delete all chunks belonging to the specified document AND this user,
+        # so one account can never delete another account's document.
         self.collection.delete(
-            where={"document_name": document_name}
+            where={
+                "$and": [
+                    {"document_name": document_name},
+                    {"user_id": user_id},
+                ]
+            }
         )
 
         logger.info(
-            f"Document '{document_name}' was deleted from the vector store."
+            f"Document '{document_name}' was deleted from the vector "
+            f"store for user {user_id}."
         )
 
 

@@ -831,9 +831,8 @@ async function checkHealth() {
 // ========== ADMIN ==========
 function setDrawer(open) {
     adminDrawer.classList.toggle("open", open);
-    drawerBackdrop.classList.toggle("open", open);
+    syncBackdrop();
 }
-
 async function refreshDocuments() {
     if (!isLoggedIn()) return;
     try {
@@ -953,17 +952,24 @@ async function handleUpload(fileList) {
 }
 
 // ========== SIDEBAR TOGGLE ==========
-function toggleSidebar() {
-    sidebar.classList.toggle("open");
-    drawerBackdrop.classList.toggle("open");
+function syncBackdrop() {
+    const anyOpen =
+        sidebar.classList.contains("open") ||
+        adminDrawer.classList.contains("open");
+    drawerBackdrop.classList.toggle("open", anyOpen);
 }
 
+function toggleSidebar() {
+    sidebar.classList.toggle("open");
+    syncBackdrop();
+}
 // ========== INIT ==========
 function init() {
     // Sidebar events
     toggleSidebarBtn.addEventListener("click", toggleSidebar);
     closeSidebarBtn.addEventListener("click", toggleSidebar);
-    drawerBackdrop.addEventListener("click", toggleSidebar);
+    
+    
     newChatBtn.addEventListener("click", () => {
         createNewConversation();
         renderChatMessages();
@@ -988,7 +994,11 @@ function init() {
 
     toggleAdminBtn.addEventListener("click", () => setDrawer(true));
     closeAdminBtn.addEventListener("click", () => setDrawer(false));
-    drawerBackdrop.addEventListener("click", () => setDrawer(false));
+    drawerBackdrop.addEventListener("click", () => {
+        sidebar.classList.remove("open");
+        adminDrawer.classList.remove("open");
+        syncBackdrop();
+    });
 
     uploadDrop.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", () => handleUpload(fileInput.files));

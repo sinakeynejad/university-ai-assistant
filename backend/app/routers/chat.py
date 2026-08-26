@@ -17,8 +17,8 @@ logger = get_logger(__name__)
 @router.post("")
 def chat(
     request: ChatRequest,
-    current_user: User = Depends(get_current_user),   
-    db: Session = Depends(get_db)                    
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     try:
         logger.info(f"User {current_user.id} asked: {request.question}")
@@ -26,6 +26,7 @@ def chat(
         return StreamingResponse(
             answer_question_stream(
                 question=request.question,
+                user_id=current_user.id,
                 history=request.history,
                 top_k=request.top_k
             ),
