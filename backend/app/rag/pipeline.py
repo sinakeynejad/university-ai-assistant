@@ -131,7 +131,10 @@ def rewrite_query(question: str) -> str:
 # Answer a user question using the RAG pipeline (Non-streaming)
 def answer_question(
     question: str,
+<<<<<<< HEAD
     user_id: int,
+=======
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
     history: Optional[List[ChatMessage]] = None,
     top_k: Optional[int] = None
 ) -> Dict:
@@ -140,6 +143,10 @@ def answer_question(
     k = top_k or settings.TOP_K
 
     embedding_model = get_embedding_model()
+<<<<<<< HEAD
+=======
+    vector_store = get_vector_store()
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
     hybrid_search = get_hybrid_search()
     llm_client = get_llm_client()
 
@@ -149,12 +156,19 @@ def answer_question(
     retrieved_chunks = hybrid_search.search(
         query_text=search_query,
         query_embedding=query_embedding,
+<<<<<<< HEAD
         user_id=user_id,
+=======
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
         top_k=k,
     )
 
     logger.info(
+<<<<<<< HEAD
         f"{len(retrieved_chunks)} relevant chunks retrieved for user {user_id}."
+=======
+        f"{len(retrieved_chunks)} relevant chunks retrieved for the question."
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
     )
 
     messages = _build_messages(
@@ -184,7 +198,10 @@ def answer_question(
 # Streaming variant for live chunk-by-chunk response
 def answer_question_stream(
     question: str,
+<<<<<<< HEAD
     user_id: int,
+=======
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
     history: Optional[List[ChatMessage]] = None,
     top_k: Optional[int] = None
 ) -> Generator[str, None, None]:
@@ -194,6 +211,10 @@ def answer_question_stream(
     k = top_k or settings.TOP_K
 
     embedding_model = get_embedding_model()
+<<<<<<< HEAD
+=======
+    vector_store = get_vector_store()
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
     hybrid_search = get_hybrid_search()
     llm_client = get_llm_client()
 
@@ -205,16 +226,27 @@ def answer_question_stream(
     yield json.dumps({"type": "status", "data": "در حال جستجو در اسناد و قوانین دانشگاه..."}) + "\n"
     query_embedding = embedding_model.embed_query(search_query)
 
+<<<<<<< HEAD
     # Retrieve chunks from vector store, scoped to this user only
     retrieved_chunks = hybrid_search.search(
         query_text=search_query,
         query_embedding=query_embedding,
         user_id=user_id,
+=======
+    # Retrieve chunks from vector store
+    retrieved_chunks = hybrid_search.search(
+        query_text=search_query,
+        query_embedding=query_embedding,
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
         top_k=k,
     )
 
     logger.info(
+<<<<<<< HEAD
         f"{len(retrieved_chunks)} relevant chunks retrieved for user {user_id} (streaming)."
+=======
+        f"{len(retrieved_chunks)} relevant chunks retrieved for streaming response."
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
     )
 
     # Build message chain
@@ -247,7 +279,11 @@ def answer_question_stream(
 
 
 # Process a document and store its chunks in the vector database
+<<<<<<< HEAD
 def ingest_document(document_name: str, raw_text: str, user_id: int) -> int:
+=======
+def ingest_document(document_name: str, raw_text: str) -> int:
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
     from app.rag.chunking import chunk_text
 
     settings = get_settings()
@@ -272,11 +308,18 @@ def ingest_document(document_name: str, raw_text: str, user_id: int) -> int:
     result = vector_store.add_chunks(
         document_name,
         chunks,
+<<<<<<< HEAD
         embeddings,
         user_id=user_id,
     )
 
     # Only rebuild this user's lexical index, not everyone's
     get_hybrid_search().refresh(user_id)
+=======
+        embeddings
+    )
+
+    get_hybrid_search().refresh()
+>>>>>>> c8d397a7424622aef1a2556a21e0a528e6306bb2
 
     return result
