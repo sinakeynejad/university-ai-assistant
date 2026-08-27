@@ -168,7 +168,7 @@ function switchConversation(id) {
     renderConversationList();
     // Close sidebar on mobile if needed
     if (window.innerWidth < 768) {
-        sidebar.classList.remove("open");
+        closeSidebar();
     }
 }
 
@@ -186,41 +186,37 @@ function getCurrentConv() {
 
 // ========== RENDER CHAT UI ==========
 function renderChatMessages() {
-    // Clear chatScroll but keep emptyState and suggestionRow? Actually we need to remove all children except emptyState
-    // We'll rebuild the chat area based on currentMessages
-    // Remove all child nodes from chatScroll except emptyState (which might be hidden)
-    // Simpler: clear chatScroll, then append messages, then re-append emptyState if needed
     const chatScroll = document.getElementById("chatScroll");
-    // Store emptyState reference
     const emptyState = document.getElementById("emptyState");
     const suggestionRow = document.getElementById("suggestionRow");
+
+    if (!chatScroll || !emptyState || !suggestionRow) return;
 
     // Clear all children
     while (chatScroll.firstChild) {
         chatScroll.removeChild(chatScroll.firstChild);
     }
 
+    // Always re-append emptyState so it stays reachable in the DOM
+    chatScroll.appendChild(emptyState);
+
     if (!currentMessages || currentMessages.length === 0) {
-        // Show empty state
-        chatScroll.appendChild(emptyState);
         emptyState.style.display = "block";
 
         const emptyTitle = document.getElementById("emptyTitle");
         const emptyDesc = document.getElementById("emptyDesc");
 
         if (conversations.length === 0) {
-            // True start screen – no chats exist yet at all
             emptyState.classList.remove("compact");
-            emptyTitle.textContent = "سوال خود را درباره‌ی اسناد دانشگاه بپرسید";
-            emptyDesc.textContent =
+            if (emptyTitle) emptyTitle.textContent = "سوال خود را درباره‌ی اسناد دانشگاه بپرسید";
+            if (emptyDesc) emptyDesc.textContent =
                 "پاسخ‌ها فقط بر اساس اسنادی است که در پایگاه دانش این دستیار بارگذاری شده‌اند.";
             suggestionRow.style.display = "flex";
             renderSuggestions();
         } else {
-            // A fresh, empty conversation (e.g. just started via "New chat")
             emptyState.classList.add("compact");
-            emptyTitle.textContent = "گفتگوی جدید";
-            emptyDesc.textContent = "سوال خود را بنویسید تا گفتگو آغاز شود.";
+            if (emptyTitle) emptyTitle.textContent = "گفتگوی جدید";
+            if (emptyDesc) emptyDesc.textContent = "سوال خود را بنویسید تا گفتگو آغاز شود.";
             suggestionRow.style.display = "none";
             suggestionRow.innerHTML = "";
         }
@@ -228,7 +224,6 @@ function renderChatMessages() {
     }
 
     emptyState.style.display = "none";
-    // Re-render all messages from currentMessages
     currentMessages.forEach((msg) => {
         appendMessage(msg.role, msg.content, null, false);
     });
@@ -258,8 +253,10 @@ function appendMessage(role, text, sources, save = true) {
         renderSourcesBlock(row, sources);
     }
 
-    chatScroll.appendChild(row);
-    chatScroll.scrollTop = chatScroll.scrollHeight;
+    if (chatScroll) {
+        chatScroll.appendChild(row);
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+    }
 
     if (save) {
         // Add to currentMessages if not already present (avoid duplicates)
@@ -458,16 +455,17 @@ function authHeader() {
 // ========== AUTH UI ==========
 function checkAuth() {
     const modal = document.getElementById("authModal");
+    if (!modal) return;
     if (isLoggedIn()) {
         modal.classList.remove("active");
-        logoutBtn.style.display = "block";
+        if (logoutBtn) logoutBtn.style.display = "block";
         // Load user conversations
         loadConversations();
         renderChatMessages();
         renderConversationList();
     } else {
         modal.classList.add("active");
-        logoutBtn.style.display = "none";
+        if (logoutBtn) logoutBtn.style.display = "none";
     }
 }
 
@@ -571,14 +569,26 @@ async function handleSubmit(e) {
         createNewConversation();
     }
 
-    // Add user message
+    // Lock in exactly which conversation this question belongs to. From
+    // here on we ONLY read/write targetConv.messages — never the global
+    // currentMessages/currentConvId — because the user can switch to a
+    // different chat while this request is still streaming, and those
+    // globals would then point at whatever chat they switched to.
+    const targetConv = getCurrentConv();
+    const targetConvId = currentConvId;
+    const isViewingTarget = () => currentConvId === targetConvId;
+
+    // Add user message (safe: still synchronous, so we're definitely still
+    // viewing targetConv at this exact point)
     appendMessage("user", question); // this pushes to currentMessages and saves
 
     questionInput.value = "";
     autoResizeTextarea();
     sendBtn.disabled = true;
 
-    const loadingEl = appendLoadingMessage();
+    // Only draw the loading indicator if the user is actually looking at
+    // this conversation right now.
+    let loadingEl = isViewingTarget() ? appendLoadingMessage() : null;
 
     try {
         const token = getToken();
@@ -586,8 +596,8 @@ async function handleSubmit(e) {
             throw new Error("توکن وجود ندارد. لطفاً مجدداً وارد شوید.");
         }
 
-        // Get last few messages from current conversation
-        const history = currentMessages.slice(-8);
+        // Get last few messages from THIS conversation specifically
+        const history = targetConv.messages.slice(-8);
 
         const res = await fetch(`${API_BASE_URL}/api/chat`, {
             method: "POST",
@@ -609,8 +619,16 @@ async function handleSubmit(e) {
             throw new Error(errBody.detail || `خطای سرور (${res.status})`);
         }
 
-        loadingEl.remove();
-        const assistantMsg = createAssistantMessagePlaceholder();
+        if (loadingEl) {
+            loadingEl.remove();
+            loadingEl = null;
+        }
+
+        // Only create a live placeholder bubble if we're still viewing this
+        // conversation - otherwise there is nothing on screen to update.
+        const assistantMsg = isViewingTarget()
+            ? createAssistantMessagePlaceholder()
+            : null;
         let fullAnswer = "";
 
         const reader = res.body.getReader();
@@ -630,16 +648,22 @@ async function handleSubmit(e) {
                 try {
                     const parsed = JSON.parse(line);
                     if (parsed.type === "status") {
-                        assistantMsg.statusEl.textContent = parsed.data;
-                        assistantMsg.statusEl.style.display = "block";
+                        if (assistantMsg && assistantMsg.statusEl && isViewingTarget()) {
+                            assistantMsg.statusEl.textContent = parsed.data;
+                            assistantMsg.statusEl.style.display = "block";
+                        }
                     } else if (parsed.type === "sources") {
-                        renderSourcesBlock(assistantMsg.row, parsed.data);
+                        if (assistantMsg && isViewingTarget()) {
+                            renderSourcesBlock(assistantMsg.row, parsed.data);
+                        }
                     } else if (parsed.type === "text") {
-                        assistantMsg.statusEl.style.display = "none";
                         fullAnswer += parsed.data;
-                        assistantMsg.bubble.innerHTML =
-                            formatCitations(fullAnswer);
-                        chatScroll.scrollTop = chatScroll.scrollHeight;
+                        if (assistantMsg && assistantMsg.statusEl && assistantMsg.bubble && isViewingTarget()) {
+                            assistantMsg.statusEl.style.display = "none";
+                            assistantMsg.bubble.innerHTML =
+                                formatCitations(fullAnswer);
+                            chatScroll.scrollTop = chatScroll.scrollHeight;
+                        }
                     }
                 } catch (e) {
                     console.error("Error parsing NDJSON frame:", e, line);
@@ -647,18 +671,37 @@ async function handleSubmit(e) {
             }
         }
 
-        // Add assistant message to currentMessages
-        currentMessages.push({ role: "assistant", content: fullAnswer });
+        // Always save the finished answer into the conversation it actually
+        // belongs to - regardless of what the user is looking at right now.
+        targetConv.messages.push({ role: "assistant", content: fullAnswer });
         saveUserData();
         renderConversationList(); // update title if needed
+
+        // If the user switched away and back mid-stream (so no live bubble
+        // was being updated), make sure what's on screen now matches what
+        // was actually saved.
+        if (isViewingTarget()) {
+            try { renderChatMessages(); } catch (_) { /* non-critical render */ }
+        }
+
         kbDot.className = "kb-dot online";
         kbStatusText.textContent = "متصل به سرور";
     } catch (err) {
-        loadingEl.remove();
-        appendMessage(
-            "assistant",
-            `متاسفانه در دریافت پاسخ خطایی رخ داد.\nجزئیات: ${err.message}\n\nمطمئن شوید بک‌اند روی ${API_BASE_URL} در حال اجراست.`,
-        );
+        if (loadingEl) {
+            loadingEl.remove();
+            loadingEl = null;
+        }
+
+        const errorText = `متاسفانه در دریافت پاسخ خطایی رخ داد.\nجزئیات: ${err.message}\n\nمطمئن شوید بک‌اند روی ${API_BASE_URL} در حال اجراست.`;
+
+        targetConv.messages.push({ role: "assistant", content: errorText });
+        saveUserData();
+        renderConversationList();
+
+        if (isViewingTarget()) {
+            try { renderChatMessages(); } catch (_) { /* non-critical render */ }
+        }
+
         kbDot.className = "kb-dot offline";
         kbStatusText.textContent = "عدم اتصال به بک‌اند";
     } finally {
@@ -676,8 +719,10 @@ function appendLoadingMessage() {
     <div class="msg-bubble loading">
       <span class="dot"></span><span class="dot"></span><span class="dot"></span>
     </div>`;
-    chatScroll.appendChild(row);
-    chatScroll.scrollTop = chatScroll.scrollHeight;
+    if (chatScroll) {
+        chatScroll.appendChild(row);
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+    }
     return row;
 }
 
@@ -700,8 +745,10 @@ function createAssistantMessagePlaceholder() {
     bubble.className = "msg-bubble";
     row.appendChild(bubble);
 
-    chatScroll.appendChild(row);
-    chatScroll.scrollTop = chatScroll.scrollHeight;
+    if (chatScroll) {
+        chatScroll.appendChild(row);
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+    }
 
     return { row, bubble, statusEl };
 }
@@ -767,7 +814,7 @@ function renderSourcesBlock(rowEl, sources) {
     });
 
     rowEl.appendChild(sourcesBlock);
-    chatScroll.scrollTop = chatScroll.scrollHeight;
+    if (chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
 }
 
 function escapeHtml(str) {
@@ -794,6 +841,7 @@ function toPersianDigits(input) {
 }
 
 function autoResizeTextarea() {
+    if (!questionInput) return;
     questionInput.style.height = "auto";
     questionInput.style.height =
         Math.min(questionInput.scrollHeight, 160) + "px";
@@ -829,10 +877,52 @@ async function checkHealth() {
 }
 
 // ========== ADMIN ==========
-function setDrawer(open) {
-    adminDrawer.classList.toggle("open", open);
+function isSidebarOpen() {
+    return sidebar.classList.contains("open");
+}
+
+function isAdminOpen() {
+    return adminDrawer.classList.contains("open");
+}
+
+// The backdrop is shared between the sidebar and the admin drawer, so its
+// visibility must always be derived from whether either panel is actually
+// open — never flipped blindly, or it drifts out of sync (leaving a stuck
+// blurred overlay, or hiding a backdrop that should be there).
+function syncBackdrop() {
+    drawerBackdrop.classList.toggle("open", isSidebarOpen() || isAdminOpen());
+}
+
+function openSidebar() {
+    // Only one side panel makes sense open at a time on top of one backdrop
+    adminDrawer.classList.remove("open");
+    sidebar.classList.add("open");
     syncBackdrop();
 }
+
+function closeSidebar() {
+    sidebar.classList.remove("open");
+    syncBackdrop();
+}
+
+function toggleSidebar() {
+    if (isSidebarOpen()) {
+        closeSidebar();
+    } else {
+        openSidebar();
+    }
+}
+
+function setDrawer(open) {
+    if (open) {
+        sidebar.classList.remove("open");
+        adminDrawer.classList.add("open");
+    } else {
+        adminDrawer.classList.remove("open");
+    }
+    syncBackdrop();
+}
+
 async function refreshDocuments() {
     if (!isLoggedIn()) return;
     try {
@@ -951,30 +1041,16 @@ async function handleUpload(fileList) {
     }
 }
 
-// ========== SIDEBAR TOGGLE ==========
-function syncBackdrop() {
-    const anyOpen =
-        sidebar.classList.contains("open") ||
-        adminDrawer.classList.contains("open");
-    drawerBackdrop.classList.toggle("open", anyOpen);
-}
-
-function toggleSidebar() {
-    sidebar.classList.toggle("open");
-    syncBackdrop();
-}
 // ========== INIT ==========
 function init() {
     // Sidebar events
     toggleSidebarBtn.addEventListener("click", toggleSidebar);
-    closeSidebarBtn.addEventListener("click", toggleSidebar);
-    
-    
+    closeSidebarBtn.addEventListener("click", closeSidebar);
     newChatBtn.addEventListener("click", () => {
         createNewConversation();
         renderChatMessages();
         renderConversationList();
-        if (window.innerWidth < 768) toggleSidebar();
+        if (window.innerWidth < 768) closeSidebar();
     });
 
     renderSuggestions();
@@ -994,10 +1070,11 @@ function init() {
 
     toggleAdminBtn.addEventListener("click", () => setDrawer(true));
     closeAdminBtn.addEventListener("click", () => setDrawer(false));
+
+    // Single backdrop click handler: close whichever panel is actually open
     drawerBackdrop.addEventListener("click", () => {
-        sidebar.classList.remove("open");
-        adminDrawer.classList.remove("open");
-        syncBackdrop();
+        closeSidebar();
+        setDrawer(false);
     });
 
     uploadDrop.addEventListener("click", () => fileInput.click());
